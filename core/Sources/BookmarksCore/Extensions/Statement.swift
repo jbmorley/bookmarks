@@ -42,7 +42,7 @@ extension Statement.Element {
         guard let safeValue = value else {
             return Set()
         }
-        return Set(safeValue.components(separatedBy: ","))
+        return Set(safeValue.components(separatedBy: .whitespaces))
     }
 
     func date(_ index: Int) throws -> Date {

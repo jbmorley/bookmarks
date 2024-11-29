@@ -35,7 +35,7 @@ extension Bookmark {
         self.init(identifier: try row.get(Database.Schema.identifier),
                   title: try row.get(Database.Schema.title),
                   url: try row.get(Database.Schema.url).url,
-                  tags: [],
+                  tags: Set(try row.get(Database.Schema.tags).components(separatedBy: .whitespaces)),
                   date: try row.get(Database.Schema.date),
                   toRead: try row.get(Database.Schema.toRead),
                   shared: try row.get(Database.Schema.shared),
@@ -73,11 +73,13 @@ public class Database {
         case tag(String)
     }
 
-    class Schema {
+    struct Schema {
 
-        static let items = Table("items")
-        static let tags = Table("tags")
-        static let items_to_tags = Table("items_to_tags")
+        struct Tables {
+            static let items = Table("items")
+            static let tags = Table("tags")
+            static let items_to_tags = Table("items_to_tags")
+        }
 
         static let id = Expression<Int64>("id")
         static let identifier = Expression<String>("identifier")
@@ -87,6 +89,7 @@ public class Database {
         static let toRead = Expression<Bool>("to_read")
         static let shared = Expression<Bool>("shared")
         static let notes = Expression<String>("notes")
+        static let tags = Expression<String>("tags")
         static let name = Expression<String>("name")
         static let itemId = Expression<Int64>("item_id")
         static let tagId = Expression<Int64>("tag_id")
@@ -123,52 +126,56 @@ public class Database {
             // one common place to make it easier to read.
 
             // Clean up the existing tables.
-            try db.run(Schema.items.drop(ifExists: true))
-            try db.run(Schema.items_to_tags.drop(ifExists: true))
-            try db.run(Schema.tags.drop(ifExists: true))
+            try db.run(Schema.Tables.items.drop(ifExists: true))
+            try db.run(Schema.Tables.items_to_tags.drop(ifExists: true))
+            try db.run(Schema.Tables.tags.drop(ifExists: true))
 
             print("create the items table...")
-            try db.run(Schema.items.create(ifNotExists: true) { t in
+            try db.run(Schema.Tables.items.create(ifNotExists: true) { t in
                 t.column(Schema.id, primaryKey: true)
                 t.column(Schema.identifier, unique: true)
                 t.column(Schema.title)
                 t.column(Schema.url, unique: true)
                 t.column(Schema.date)
             })
-            try db.run(Schema.items.createIndex(Schema.identifier, ifNotExists: true))
+            try db.run(Schema.Tables.items.createIndex(Schema.identifier, ifNotExists: true))
 
             print("create the tags table...")
-            try db.run(Schema.tags.create { t in
+            try db.run(Schema.Tables.tags.create { t in
                 t.column(Schema.id, primaryKey: true)
                 t.column(Schema.name, unique: true, collate: .nocase)
             })
 
             print("create the items_to_tags table...")
-            try db.run(Schema.items_to_tags.create { t in
+            try db.run(Schema.Tables.items_to_tags.create { t in
                 t.column(Schema.id, primaryKey: true)
                 t.column(Schema.itemId)
                 t.column(Schema.tagId)
                 t.unique(Schema.itemId, Schema.tagId)
-                t.foreignKey(Schema.itemId, references: Schema.items, Schema.id, delete: .cascade)
-                t.foreignKey(Schema.tagId, references: Schema.tags, Schema.id, delete: .cascade)
+                t.foreignKey(Schema.itemId, references: Schema.Tables.items, Schema.id, delete: .cascade)
+                t.foreignKey(Schema.tagId, references: Schema.Tables.tags, Schema.id, delete: .cascade)
             })
 
         },
         10: { db in
             print("add the to_read column...")
-            try db.run(Schema.items.addColumn(Schema.toRead, defaultValue: false))
+            try db.run(Schema.Tables.items.addColumn(Schema.toRead, defaultValue: false))
         },
         11: { db in
             print("add the shared column...")
-            try db.run(Schema.items.addColumn(Schema.shared, defaultValue: false))
+            try db.run(Schema.Tables.items.addColumn(Schema.shared, defaultValue: false))
         },
         12: { db in
             print("add the notes column...")
-            try db.run(Schema.items.addColumn(Schema.notes, defaultValue: ""))
+            try db.run(Schema.Tables.items.addColumn(Schema.notes, defaultValue: ""))
         },
         13: { db in
             print("add index on items.url...")
-            try db.run(Schema.items.createIndex(Schema.url))
+            try db.run(Schema.Tables.items.createIndex(Schema.url))
+        },
+        14: { db in
+            print("add the tags column...")
+            try db.run(Schema.Tables.items.addColumn(Schema.tags, defaultValue: ""))
         },
     ]
 
@@ -261,19 +268,11 @@ public class Database {
 
     private func syncQueue_bookmark(identifier: String) throws -> Bookmark {
         dispatchPrecondition(condition: .onQueue(syncQueue))
-        let run = try db.prepare(Schema.items.filter(Schema.identifier == identifier).limit(1)).map(Bookmark.init)
+        let run = try db.prepare(Schema.Tables.items.filter(Schema.identifier == identifier).limit(1)).map(Bookmark.init)
         guard let result = run.first else {
             throw BookmarksError.bookmarkNotFoundByIdentifier(identifier)
         }
-        let tags = try syncQueue_tags(bookmarkIdentifier: result.identifier)
-        return Bookmark(identifier: result.identifier,
-                        title: result.title,
-                        url: result.url,
-                        tags: Set(tags),
-                        date: result.date,
-                        toRead: result.toRead,
-                        shared: result.shared,
-                        notes: result.notes)
+        return result
     }
 
     private func syncQueue_fetchOrInsertTag(name: String) throws -> Int64 {
@@ -281,7 +280,7 @@ public class Database {
         if let id = try? syncQueue_tag(name: name) {
             return id
         }
-        let id = try db.run(Schema.tags.insert(
+        let id = try db.run(Schema.Tables.tags.insert(
             Schema.name <- name
         ))
         return id
@@ -289,7 +288,7 @@ public class Database {
 
     private func syncQueue_tag(name: String) throws -> Int64 {
         dispatchPrecondition(condition: .onQueue(syncQueue))
-        let results = try db.prepare(Schema.tags.filter(Schema.name == name).limit(1)).map { row in
+        let results = try db.prepare(Schema.Tables.tags.filter(Schema.name == name).limit(1)).map { row in
             try row.get(Schema.id)
         }
         guard let result = results.first else {
@@ -300,12 +299,12 @@ public class Database {
 
     private func syncQueue_tags(bookmarkIdentifier: String) throws -> Set<String> {
         dispatchPrecondition(condition: .onQueue(syncQueue))
-        return Set(try self.db.prepare(Schema.items_to_tags
-            .join(Schema.items, on: Schema.items_to_tags[Schema.itemId] == Schema.items[Schema.id])
-            .join(Schema.tags, on: Schema.items_to_tags[Schema.tagId] == Schema.tags[Schema.id])
+        return Set(try self.db.prepare(Schema.Tables.items_to_tags
+            .join(Schema.Tables.items, on: Schema.Tables.items_to_tags[Schema.itemId] == Schema.Tables.items[Schema.id])
+            .join(Schema.Tables.tags, on: Schema.Tables.items_to_tags[Schema.tagId] == Schema.Tables.tags[Schema.id])
             .filter(Schema.identifier == bookmarkIdentifier))
             .map { row -> String in
-                try row.get(Schema.tags[Schema.name])
+                try row.get(Schema.Tables.tags[Schema.name])
             })
     }
 
@@ -324,18 +323,19 @@ public class Database {
 
     private func syncQueue_insertOrReplace(bookmark: Bookmark) throws {
         let tags = try bookmark.tags.map { try syncQueue_fetchOrInsertTag(name: $0) }
-        let itemId = try self.db.run(Schema.items.insert(or: .replace,
-                                                         Schema.identifier <- bookmark.identifier,
-                                                         Schema.title <- bookmark.title,
-                                                         Schema.url <- bookmark.url.absoluteString,
-                                                         Schema.date <- bookmark.date,
-                                                         Schema.toRead <- bookmark.toRead,
-                                                         Schema.shared <- bookmark.shared,
-                                                         Schema.notes <- bookmark.notes))
+        let itemId = try self.db.run(Schema.Tables.items.insert(or: .replace,
+                                                                Schema.identifier <- bookmark.identifier,
+                                                                Schema.title <- bookmark.title,
+                                                                Schema.url <- bookmark.url.absoluteString,
+                                                                Schema.date <- bookmark.date,
+                                                                Schema.toRead <- bookmark.toRead,
+                                                                Schema.shared <- bookmark.shared,
+                                                                Schema.notes <- bookmark.notes,
+                                                                Schema.tags <- bookmark.tags.joined(separator: " ")))
         for tagId in tags {
-            _ = try self.db.run(Schema.items_to_tags.insert(or: .replace,
-                                                            Schema.itemId <- itemId,
-                                                            Schema.tagId <- tagId))
+            _ = try self.db.run(Schema.Tables.items_to_tags.insert(or: .replace,
+                                                                   Schema.itemId <- itemId,
+                                                                   Schema.tagId <- tagId))
         }
         try syncQueue_pruneTags()
     }
@@ -392,9 +392,9 @@ public class Database {
             do {
                 try self.db.transaction {
                     let result = Swift.Result { () -> Void in
-                        try self.db.run(Schema.items.delete())
-                        try self.db.run(Schema.tags.delete())
-                        try self.db.run(Schema.items_to_tags.delete())
+                        try self.db.run(Schema.Tables.items.delete())
+                        try self.db.run(Schema.Tables.tags.delete())
+                        try self.db.run(Schema.Tables.items_to_tags.delete())
                     }
                     self.syncQueue_notifyObservers(scope: .all)
                     completion(result)
@@ -408,7 +408,7 @@ public class Database {
     private func syncQueue_delete(bookmark identifier: Bookmark.ID) throws {
         dispatchPrecondition(condition: .onQueue(syncQueue))
         try db.transaction {
-            let count = try db.run(Schema.items.filter(Schema.identifier == identifier).delete())
+            let count = try db.run(Schema.Tables.items.filter(Schema.identifier == identifier).delete())
             if count == 0 {
                 throw BookmarksError.bookmarkNotFoundByIdentifier(identifier)
             }
@@ -432,7 +432,7 @@ public class Database {
     private func syncQueue_delete(tag: String) throws {
         dispatchPrecondition(condition: .onQueue(syncQueue))
         try self.db.transaction {
-            try self.db.run(Schema.tags.filter(Schema.name == tag).delete())
+            try self.db.run(Schema.Tables.tags.filter(Schema.name == tag).delete())
             self.syncQueue_notifyObservers(scope: .tag(tag))
         }
     }
@@ -479,27 +479,9 @@ public class Database {
                 url,
                 tags,
                 date,
-                to_read,
-                shared,
-                notes
+                to_read
             FROM
                 items
-            LEFT JOIN
-                (
-                    SELECT
-                        item_id,
-                        GROUP_CONCAT(tags.name) AS tags
-                    FROM
-                        items_to_tags
-                    INNER JOIN
-                        tags
-                    ON
-                        tags.id == items_to_tags.tag_id
-                    GROUP BY
-                        item_id
-                )
-            ON
-                items.id == item_id
             WHERE \(whereClause)
             ORDER BY
                 date DESC
@@ -513,8 +495,8 @@ public class Database {
                             tags: try row.set(3),
                             date: try row.date(4),
                             toRead: try row.bool(5),
-                            shared: try row.bool(6),
-                            notes: try row.string(7))
+                            shared: true,
+                            notes: "")
         }
 
         return bookmarks
@@ -554,7 +536,17 @@ public class Database {
 
     public func bookmarks<T: QueryDescription>(query: T) async throws -> [Bookmark] {
         try await run {
-            try self.syncQueue_bookmarks(where: query.sql)
+#if DEBUG
+            let clock = ContinuousClock()
+            var result: [Bookmark] = []
+            let duration = try clock.measure {
+                result = try self.syncQueue_bookmarks(where: query.sql)
+            }
+            print("Query took \(duration).")
+            return result
+#else
+            return try self.syncQueue_bookmarks(where: query.sql)
+#endif
         }
     }
 
@@ -566,7 +558,7 @@ public class Database {
 
     private func syncQueue_identifiers() throws -> [String] {
         dispatchPrecondition(condition: .onQueue(syncQueue))
-        return try self.db.prepare(Schema.items.select(Schema.identifier)).map { row -> String in
+        return try self.db.prepare(Schema.Tables.items.select(Schema.identifier)).map { row -> String in
             try row.get(Schema.identifier)
         }
     }

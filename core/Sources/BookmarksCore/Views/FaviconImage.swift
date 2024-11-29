@@ -33,23 +33,23 @@ public struct FaviconImage: View {
     }
 
     public var body: some View {
-        if let url = url.faviconURL {
-            AsyncImage(url: url) { image in
-                image
-                    .resizable()
-                    .frame(width: LayoutMetrics.size.width, height: LayoutMetrics.size.height)
-            } placeholder: {
-                Image(systemName: "globe")
-                    .resizable()
-                    .foregroundColor(.secondary)
-                    .frame(width: LayoutMetrics.size.width, height: LayoutMetrics.size.height)
-            }
-        } else {
+//        if let url = url.faviconURL {
+//            AsyncImage(url: url) { image in
+//                image
+//                    .resizable()
+//                    .frame(width: LayoutMetrics.size.width, height: LayoutMetrics.size.height)
+//            } placeholder: {
+//                Image(systemName: "globe")
+//                    .resizable()
+//                    .foregroundColor(.secondary)
+//                    .frame(width: LayoutMetrics.size.width, height: LayoutMetrics.size.height)
+//            }
+//        } else {
             Image(systemName: "globe")
                 .resizable()
                 .foregroundColor(.secondary)
                 .frame(width: LayoutMetrics.size.width, height: LayoutMetrics.size.height)
-        }
+//        }
     }
 
 }
