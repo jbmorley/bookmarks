@@ -46,6 +46,8 @@ public struct Bookmark: Equatable {
     public var toRead: Bool
     public var shared: Bool
     public var notes: String
+    public var iconURL: URL?
+    public var iconURLVersion: Int
     public var thumbnail: SafeImage?
 
     init(identifier: String,
@@ -56,7 +58,9 @@ public struct Bookmark: Equatable {
          toRead: Bool,
          shared: Bool,
          notes: String,
-         thumbnail: SafeImage? = nil) {
+         thumbnail: SafeImage? = nil,
+         iconURL: URL? = nil,
+         iconURLVersion: Int = 0) {
         self.identifier = identifier
         self.title = title
         self.url = url
@@ -66,6 +70,8 @@ public struct Bookmark: Equatable {
         self.shared = shared
         self.notes = notes
         self.thumbnail = thumbnail
+        self.iconURL = iconURL
+        self.iconURLVersion = iconURLVersion
     }
 
     public static func == (lhs: Bookmark, rhs: Bookmark) -> Bool {
@@ -93,29 +99,25 @@ public struct Bookmark: Equatable {
         guard lhs.notes == rhs.notes else {
             return false
         }
+        guard lhs.iconURL == rhs.iconURL else {
+            return false
+        }
+        guard lhs.iconURLVersion == rhs.iconURLVersion else {
+            return false
+        }
         return true
     }
 
     public func setting(toRead: Bool) -> Bookmark {
-        Bookmark(identifier: identifier,
-                 title: title,
-                 url: url,
-                 tags: tags,
-                 date: date,
-                 toRead: toRead,
-                 shared: shared,
-                 notes: notes)
+        var bookmark = self
+        bookmark.toRead = true
+        return bookmark
     }
 
     public func setting(shared: Bool) -> Bookmark {
-        Bookmark(identifier: identifier,
-                 title: title,
-                 url: url,
-                 tags: tags,
-                 date: date,
-                 toRead: toRead,
-                 shared: shared,
-                 notes: notes)
+        var bookmark = self
+        bookmark.shared = true
+        return bookmark
     }
 
     public func url(_ location: Location) throws -> URL {
@@ -146,7 +148,7 @@ extension Bookmark: Hashable {
 extension Bookmark: CustomStringConvertible {
 
     public var description: String {
-        "\(url.absoluteString) (title: \(title), tags: [\(tags.joined(separator: ", "))], date: \(date), toRead: \(toRead), notes: '\(self.notes)')"
+        "\(url.absoluteString) (title: \(title), tags: [\(tags.joined(separator: ", "))], date: \(date), toRead: \(toRead), notes: '\(self.notes)', iconURLVersion: \(iconURLVersion)"
     }
 
 }

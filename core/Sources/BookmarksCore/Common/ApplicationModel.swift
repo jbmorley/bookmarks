@@ -108,6 +108,22 @@ public class ApplicationModel: ObservableObject {
             .assign(to: \.topTags, on: self)
             .store(in: &cancellables)
 
+        Task {
+            let iconURLVersion = 2
+            do {
+                // TODO: Rename identifiers
+                // TODO: Would it be better if this accepted an expression that matched the model?
+                for try await var bookmark in database.identifiers(query: IconURLVersionLessThan(iconURLVersion)) {
+                    print("Processing icon URL for '\(bookmark.url)'...")
+                    bookmark.iconURL = bookmark.url.faviconURL
+                    bookmark.iconURLVersion = iconURLVersion
+                    try await database.insertOrUpdate(bookmark: bookmark)
+                }
+                assertionFailure("Background processor iterator failed unexpectedly.")
+            } catch {
+                assertionFailure("Background processor iterator failed unexpectedly with error \(error).")
+            }
+        }
     }
 
     public func authenticate(username: String,

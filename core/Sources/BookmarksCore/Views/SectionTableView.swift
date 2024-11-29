@@ -41,7 +41,7 @@ struct SectionTableView: View {
         List(selection: $sectionViewModel.selection) {
             ForEach(sectionViewModel.bookmarks) { bookmark in
                 HStack(spacing: LayoutMetrics.horizontalSpacing) {
-                    FaviconImage(url: bookmark.url)
+                    FaviconImage(url: bookmark.iconURL)
                     VStack(alignment: .leading) {
                         HStack {
                             Text(bookmark.title)

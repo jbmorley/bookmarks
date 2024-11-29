@@ -31,8 +31,19 @@ extension Statement.Element {
         return value
     }
 
+    func optionalString(_ index: Int) throws -> String? {
+        guard let value = self[index] as? String? else {
+            throw BookmarksError.corrupt
+        }
+        return value
+    }
+
     func url(_ index: Int) throws -> URL {
         try string(index).url
+    }
+
+    func optionalURL(_ index: Int) throws -> URL? {
+        try optionalString(index)?.url
     }
 
     func set(_ index: Int) throws -> Set<String> {

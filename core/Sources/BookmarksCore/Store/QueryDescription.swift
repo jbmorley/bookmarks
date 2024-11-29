@@ -149,6 +149,30 @@ public struct Like: QueryDescription, Equatable {
 
 }
 
+// TODO: I wonder if it might be more elegant to inject this as an 'any' expression?
+public struct IconURLVersionLessThan: QueryDescription, Equatable {
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.version == rhs.version
+    }
+
+    let version: Int
+
+    public var sql: String {
+        let expression = Database.Schema.iconURLVersion < version
+        return expression.asSQL()
+    }
+
+    // TODO: Check if the filter is used at all.
+    public var filter: String { "" }
+    public var section: BookmarksSection { .all }
+
+    init(_ version: Int) {
+        self.version = version
+    }
+
+}
+
 public extension QueryDescription where Self: Equatable {
 
     func eraseToAnyQuery() -> AnyQuery {

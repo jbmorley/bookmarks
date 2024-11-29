@@ -26,14 +26,14 @@ public struct FaviconImage: View {
         public static let size = CGSize(width: 16, height: 16)
     }
 
-    private var url: URL
+    private var url: URL?
 
-    public init(url: URL) {
+    public init(url: URL?) {
         self.url = url
     }
 
     public var body: some View {
-        if let url = url.faviconURL {
+        if let url {
             AsyncImage(url: url) { image in
                 image
                     .resizable()

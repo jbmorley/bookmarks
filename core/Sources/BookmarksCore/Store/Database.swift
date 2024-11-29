@@ -29,6 +29,7 @@ public protocol DatabaseObserver {
     func databaseDidUpdate(database: Database, scope: Database.Scope)
 }
 
+// TODO: Priority queues?
 extension Bookmark {
 
     init(row: Row) throws {
@@ -39,13 +40,16 @@ extension Bookmark {
                   date: try row.get(Database.Schema.date),
                   toRead: try row.get(Database.Schema.toRead),
                   shared: try row.get(Database.Schema.shared),
-                  notes: try row.get(Database.Schema.notes))
+                  notes: try row.get(Database.Schema.notes),
+                  iconURL: try row.get(Database.Schema.iconURL)?.url,
+                  iconURLVersion: try row.get(Database.Schema.iconURLVersion))
     }
 
 }
 
 extension Connection {
 
+    // TODO: Check if this is already supported in SQLite.swift
     public var userVersion: Int32 {
         get { return Int32(try! scalar("PRAGMA user_version") as! Int64)}
         set { try! run("PRAGMA user_version = \(newValue)") }
@@ -87,6 +91,8 @@ public class Database {
         static let toRead = Expression<Bool>("to_read")
         static let shared = Expression<Bool>("shared")
         static let notes = Expression<String>("notes")
+        static let iconURL = Expression<String?>("icon_url")
+        static let iconURLVersion = Expression<Int>("icon_url_version")
         static let name = Expression<String>("name")
         static let itemId = Expression<Int64>("item_id")
         static let tagId = Expression<Int64>("tag_id")
@@ -169,6 +175,11 @@ public class Database {
         13: { db in
             print("add index on items.url...")
             try db.run(Schema.items.createIndex(Schema.url))
+        },
+        14: { db in
+            print("add the icon column...")
+            try db.run(Schema.items.addColumn(Schema.iconURL))
+            try db.run(Schema.items.addColumn(Schema.iconURLVersion, defaultValue: 0))
         },
     ]
 
@@ -321,7 +332,6 @@ public class Database {
         }
     }
 
-
     private func syncQueue_insertOrReplace(bookmark: Bookmark) throws {
         let tags = try bookmark.tags.map { try syncQueue_fetchOrInsertTag(name: $0) }
         let itemId = try self.db.run(Schema.items.insert(or: .replace,
@@ -331,7 +341,9 @@ public class Database {
                                                          Schema.date <- bookmark.date,
                                                          Schema.toRead <- bookmark.toRead,
                                                          Schema.shared <- bookmark.shared,
-                                                         Schema.notes <- bookmark.notes))
+                                                         Schema.notes <- bookmark.notes,
+                                                         Schema.iconURL <- bookmark.iconURL?.absoluteString,
+                                                         Schema.iconURLVersion <- bookmark.iconURLVersion))
         for tagId in tags {
             _ = try self.db.run(Schema.items_to_tags.insert(or: .replace,
                                                             Schema.itemId <- itemId,
@@ -347,6 +359,26 @@ public class Database {
             // we only notify observers if the data has actually changed so we instead fetch the item and
             // compare.
             if let existingBookmark = try? self.syncQueue_bookmark(identifier: bookmark.identifier) {
+
+                // TODO: This is quite inelegant, but...
+                // Derived data should be stable for a given URL and should never be overwritten even
+                // if we've already got an existing bookmark. The better solution would be for the
+                // updater to decide what to do; right now we're relying on a replacement strategy
+                // because, up until now, there was no data stored on our bookmarks that wasn't
+                // downloaded from Pinboard; it was essentially a local cache. With derived data that
+                // changes and a better solution would be to get each bookmark in turn and update it
+                // which would also give us the freedom to make more informed choices in the future.
+                // Until now, we clone across cached data that has a different version.
+                // This might definitely make sense to use in-memory objects to store these tuples.
+                // Perhaps 'VersionedProperty'?
+                var bookmark = bookmark
+                if bookmark.iconURLVersion < existingBookmark.iconURLVersion {
+                    print("Keeping cached icon URL")
+                    bookmark.iconURL = existingBookmark.iconURL
+                } else {
+                    print("Using new icon URL for '\(bookmark.url)'")
+                }
+
                 if existingBookmark != bookmark {
                     try self.syncQueue_insertOrReplace(bookmark: bookmark)
                     self.syncQueue_notifyObservers(scope: .bookmark(bookmark.id))
@@ -469,52 +501,44 @@ public class Database {
         return tags
     }
 
-    public func syncQueue_bookmarks(where whereClause: String) throws -> [Bookmark] {
+    public func syncQueue_bookmarks(where whereClause: String, limit: Int?) throws -> [Bookmark] {
         dispatchPrecondition(condition: .onQueue(syncQueue))
 
-        let selectQuery = """
+        // TODO: Can I create this in SQLite's expression syntax? Do I want to?
+        var selectQuery = """
             SELECT
                 identifier,
                 title,
                 url,
-                tags,
                 date,
                 to_read,
                 shared,
-                notes
+                notes,
+                icon_url,
+                icon_url_version
             FROM
                 items
-            LEFT JOIN
-                (
-                    SELECT
-                        item_id,
-                        GROUP_CONCAT(tags.name) AS tags
-                    FROM
-                        items_to_tags
-                    INNER JOIN
-                        tags
-                    ON
-                        tags.id == items_to_tags.tag_id
-                    GROUP BY
-                        item_id
-                )
-            ON
-                items.id == item_id
             WHERE \(whereClause)
             ORDER BY
                 date DESC
             """
+
+        if let limit {
+            selectQuery += " LIMIT \(limit)"
+        }
 
         let statement = try db.prepare(selectQuery)
         let bookmarks = try statement.map { row in
             return Bookmark(identifier: try row.string(0),
                             title: try row.string(1),
                             url: try row.url(2),
-                            tags: try row.set(3),
-                            date: try row.date(4),
-                            toRead: try row.bool(5),
-                            shared: try row.bool(6),
-                            notes: try row.string(7))
+                            tags: [],
+                            date: try row.date(3),
+                            toRead: try row.bool(4),
+                            shared: try row.bool(5),
+                            notes: try row.string(6),
+                            iconURL: try row.optionalURL(7),
+                            iconURLVersion: try row.integer(8))
         }
 
         return bookmarks
@@ -552,9 +576,9 @@ public class Database {
         return Int(try db.scalar(selectQuery) as! Int64)
     }
 
-    public func bookmarks<T: QueryDescription>(query: T) async throws -> [Bookmark] {
+    public func bookmarks<T: QueryDescription>(query: T = True(), limit: Int? = nil) async throws -> [Bookmark] {
         try await run {
-            try self.syncQueue_bookmarks(where: query.sql)
+            try self.syncQueue_bookmarks(where: query.sql, limit: limit)
         }
     }
 
